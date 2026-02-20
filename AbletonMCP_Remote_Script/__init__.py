@@ -712,6 +712,7 @@ class AbletonMCP(ControlSurface):
                                  # --- NEW: Simpler mutating ---
                                  "set_simpler_playback_mode", "set_sample_warping", "set_sample_warp_mode",
                                  "simpler_crop", "simpler_reverse",
+                                 "load_sample_to_simpler",
                                  # --- NEW: Looper mutating ---
                                  "looper_action", "looper_speed",
                                  # --- NEW: Tuning mutating ---
@@ -1625,6 +1626,11 @@ class AbletonMCP(ControlSurface):
                             track_index = params.get("track_index", 0)
                             device_index = params.get("device_index", 0)
                             result = self._simpler_reverse(track_index, device_index)
+                        elif command_type == "load_sample_to_simpler":
+                            track_index = params.get("track_index", 0)
+                            device_index = params.get("device_index", 0)
+                            file_path = params.get("file_path", "")
+                            result = self._load_sample_to_simpler(track_index, device_index, file_path)
 
                         # --- NEW: Looper mutating ---
                         elif command_type == "looper_action":
@@ -8703,6 +8709,194 @@ class AbletonMCP(ControlSurface):
             raise ValueError("Device does not support reverse")
         device.reverse()
         return {"status": "Sample reversed"}
+
+    def _load_sample_to_simpler(self, track_index, device_index, file_path):
+        """Load an audio sample file into a Simpler device on the specified track.
+
+        Strategy: Navigate the browser's user_folders (Places) tree by matching
+        path components from the file path, then use browser.load_item().
+        """
+        import os
+        track = self._validate_track_index(track_index)
+        device = self._validate_device_index(track, device_index)
+
+        if device.class_name not in ('OriginalSimpler', 'MultiSampler'):
+            raise ValueError("Device is not a Simpler/Sampler (class: {0})".format(device.class_name))
+
+        if not file_path or not os.path.exists(file_path):
+            raise ValueError("File not found: {0}".format(file_path))
+
+        self._song.view.selected_track = track
+        self._song.view.select_device(device)
+
+        app = self.application()
+        browser = app.browser
+        sample_name = os.path.basename(file_path)
+
+        # Enable hotswap on the Simpler so load_item targets it
+        try:
+            browser.hotswap_target = device
+            self.log_message("(AbletonMCP) Hotswap target set to: " + device.name)
+        except Exception as e:
+            self.log_message("(AbletonMCP) Could not set hotswap: " + str(e))
+
+        # Build the ordered list of path components to navigate
+        # e.g. /Users/palmer/Music/Samples/folder/file.wav
+        # -> ['Users', 'palmer', 'Music', 'Samples', 'folder', 'file.wav']
+        parts = []
+        p = file_path
+        while True:
+            head, tail = os.path.split(p)
+            if tail:
+                parts.insert(0, tail)
+            else:
+                if head:
+                    parts.insert(0, head)
+                break
+            p = head
+
+        found_item = None
+        debug_info = []
+
+        # --- Strategy 1: Navigate user_folders (Places) by path ---
+        # Each Places entry is a root folder. We check if it matches
+        # part of our file path, then navigate down matching each component.
+        if hasattr(browser, 'user_folders'):
+            try:
+                places = list(browser.user_folders)
+                debug_info.append("Places entries: {0}".format(len(places)))
+                for place in places:
+                    place_name = place.name if hasattr(place, 'name') else ""
+                    place_uri = place.uri if hasattr(place, 'uri') else ""
+                    debug_info.append("  Place: '{0}' uri='{1}'".format(place_name, place_uri[:80]))
+
+                    # Check if this Place's name matches any directory in our path
+                    if place_name in parts:
+                        idx = parts.index(place_name)
+                        remaining = parts[idx + 1:]  # path components after the match
+                        found_item = self._navigate_browser_path(place, remaining)
+                        if found_item:
+                            debug_info.append("  -> FOUND via place '{0}'".format(place_name))
+                            break
+
+                    # Also try: the Place might represent a parent directory
+                    # and contain children that match our path components
+                    if not found_item:
+                        try:
+                            children = list(place.children)
+                            for child in children:
+                                cname = child.name if hasattr(child, 'name') else ""
+                                if cname in parts:
+                                    cidx = parts.index(cname)
+                                    remaining = parts[cidx + 1:]
+                                    found_item = self._navigate_browser_path(child, remaining)
+                                    if found_item:
+                                        debug_info.append("  -> FOUND via child '{0}' of '{1}'".format(cname, place_name))
+                                        break
+                        except Exception:
+                            pass
+                    if found_item:
+                        break
+            except Exception as e:
+                debug_info.append("Error reading user_folders: " + str(e))
+
+        # --- Strategy 2: Search current_project ---
+        if not found_item and hasattr(browser, 'current_project'):
+            try:
+                found_item = self._find_file_in_tree(browser.current_project, sample_name, 8)
+                if found_item:
+                    debug_info.append("Found in current_project")
+            except Exception as e:
+                debug_info.append("Error in current_project: " + str(e))
+
+        # --- Strategy 3: Search user_library ---
+        if not found_item and hasattr(browser, 'user_library'):
+            try:
+                found_item = self._find_file_in_tree(browser.user_library, sample_name, 8)
+                if found_item:
+                    debug_info.append("Found in user_library")
+            except Exception as e:
+                debug_info.append("Error in user_library: " + str(e))
+
+        # Log debug info
+        for line in debug_info:
+            self.log_message("(AbletonMCP) " + line)
+
+        # Load the item
+        if found_item:
+            try:
+                browser.load_item(found_item)
+                self.log_message("(AbletonMCP) Successfully loaded: " + found_item.name)
+                try:
+                    browser.hotswap_target = None
+                except Exception:
+                    pass
+                return {
+                    "status": "Sample loaded into Simpler",
+                    "track_index": track_index,
+                    "device_index": device_index,
+                    "sample_name": sample_name,
+                    "file_path": file_path
+                }
+            except Exception as e:
+                self.log_message("(AbletonMCP) Failed browser.load_item: " + str(e))
+
+        try:
+            browser.hotswap_target = None
+        except Exception:
+            pass
+
+        return {
+            "error": "Could not find sample in Ableton's browser.",
+            "file_path": file_path,
+            "sample_name": sample_name,
+            "debug": debug_info,
+            "suggestion": "Add your samples folder to Ableton's browser Places: In Ableton's browser sidebar, click 'Add Folder' and add the parent folder (e.g. /Users/palmer/Music/Samples). Then retry."
+        }
+
+    def _navigate_browser_path(self, node, remaining_parts):
+        """Navigate down a browser tree following path components sequentially."""
+        if not remaining_parts:
+            return None
+        target = remaining_parts[0]
+        rest = remaining_parts[1:]
+
+        try:
+            children = list(node.children)
+        except Exception:
+            return None
+
+        for child in children:
+            cname = child.name if hasattr(child, 'name') else ""
+            if cname == target:
+                if not rest:
+                    # This is the final component (the file)
+                    if hasattr(child, 'is_loadable') and child.is_loadable:
+                        return child
+                    return None
+                else:
+                    # Navigate deeper
+                    return self._navigate_browser_path(child, rest)
+        return None
+
+    def _find_file_in_tree(self, parent, target_name, max_depth, depth=0):
+        """Recursively search a browser tree for a file by exact name."""
+        if depth > max_depth:
+            return None
+        try:
+            children = list(parent.children) if hasattr(parent, 'children') else []
+            for child in children:
+                cname = child.name if hasattr(child, 'name') else ""
+                if cname == target_name:
+                    if hasattr(child, 'is_loadable') and child.is_loadable:
+                        return child
+                if hasattr(child, 'children'):
+                    result = self._find_file_in_tree(child, target_name, max_depth, depth + 1)
+                    if result:
+                        return result
+        except Exception:
+            pass
+        return None
 
     def _get_sample_slices(self, track_index, device_index):
         """Get slice points from a Simpler in slicing mode"""

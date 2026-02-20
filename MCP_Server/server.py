@@ -5953,6 +5953,27 @@ def simpler_reverse(ctx: Context, track_index: int, device_index: int) -> str:
         return f"Error reversing sample: {str(e)}"
 
 @mcp.tool()
+def load_sample_to_simpler(ctx: Context, track_index: int, device_index: int, file_path: str) -> str:
+    """Load an audio sample file into a Simpler device on the specified track.
+
+    Parameters:
+    - track_index: Index of the track containing the Simpler
+    - device_index: Index of the Simpler device on the track
+    - file_path: Full path to the audio file on disk (e.g., /Users/me/samples/kick.wav)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("load_sample_to_simpler", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "file_path": file_path
+        })
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error loading sample to Simpler: {str(e)}")
+        return f"Error loading sample to Simpler: {str(e)}"
+
+@mcp.tool()
 def get_sample_slices(ctx: Context, track_index: int, device_index: int) -> str:
     """Get slice points from a Simpler in slicing mode.
 
