@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ableton-mcp-ultimate"
+version = "2.0.0"
+description = "The most comprehensive Ableton Live MCP server - 352 tools for complete DAW control via AI"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+readme = "README.md"
+keywords = ["ableton", "mcp", "model-context-protocol", "music-production", "daw", "midi", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "mcp>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/IvPalmer/ableton-mcp-ultimate"
+Repository = "https://github.com/IvPalmer/ableton-mcp-ultimate"
+Issues = "https://github.com/IvPalmer/ableton-mcp-ultimate/issues"
+
+[project.scripts]
+ableton-mcp-ultimate = "MCP_Server.server:main"
+
+[tool.setuptools.packages.find]
+include = ["MCP_Server*"]
