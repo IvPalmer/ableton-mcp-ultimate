@@ -1,6 +1,6 @@
 # Ableton MCP Ultimate
 
-The most comprehensive Ableton Live MCP server — 352 tools for complete DAW control via Claude.
+The most comprehensive Ableton Live MCP server — 353 tools for complete DAW control via Claude.
 
 ## Architecture
 
@@ -34,7 +34,9 @@ Claude/LLM  <-->  MCP Server (FastMCP, Python)  <--TCP:9877-->  Remote Script (C
 | Component | Path |
 |-----------|------|
 | MCP Server binary | `/Users/palmer/Music/Plugins/ableton-mcp-ultimate/.venv/bin/ableton-mcp-ultimate` |
-| Remote Script (installed) | `/Users/palmer/Library/Preferences/Ableton/Live 12.3.5/User Remote Scripts/AbletonMCP/__init__.py` |
+| Remote Script (source) | `/Users/palmer/Music/Plugins/ableton-mcp-ultimate/AbletonMCP_Remote_Script/__init__.py` |
+| Remote Script (User) | `/Users/palmer/Library/Preferences/Ableton/Live 12.3.5/User Remote Scripts/AbletonMCP/__init__.py` |
+| Remote Script (App Bundle - what Ableton reads) | `/Applications/Ableton Live 12 Suite.app/Contents/App-Resources/MIDI Remote Scripts/AbletonMCP/__init__.py` |
 | Claude Desktop config | `/Users/palmer/Library/Application Support/Claude/claude_desktop_config.json` |
 
 ### Activation
@@ -43,19 +45,46 @@ Claude/LLM  <-->  MCP Server (FastMCP, Python)  <--TCP:9877-->  Remote Script (C
 2. **Claude Desktop**: The `claude_desktop_config.json` already points to the server binary. Restart the Claude Desktop app if the MCP server code was updated.
 3. **Claude Code CLI**: The server is also configured in the global config. Tools appear as `mcp__AbletonMCP__*`.
 
-### Rebuilding After Changes
+### Deploying Remote Script Changes
+
+**IMPORTANT**: Ableton reads from the App Bundle, NOT User Remote Scripts. Both must be updated.
+
+```bash
+# 1. Copy to User Remote Scripts
+cp /Users/palmer/Music/Plugins/ableton-mcp-ultimate/AbletonMCP_Remote_Script/__init__.py "/Users/palmer/Library/Preferences/Ableton/Live 12.3.5/User Remote Scripts/AbletonMCP/__init__.py"
+
+# 2. Copy to App Bundle (requires sudo — user must run this manually)
+sudo cp /Users/palmer/Music/Plugins/ableton-mcp-ultimate/AbletonMCP_Remote_Script/__init__.py "/Applications/Ableton Live 12 Suite.app/Contents/App-Resources/MIDI Remote Scripts/AbletonMCP/__init__.py"
+
+# 3. Restart Ableton Live
+```
+
+### Rebuilding MCP Server After Changes
 
 ```bash
 cd /Users/palmer/Music/Plugins/ableton-mcp-ultimate
 source .venv/bin/activate
 pip install -e .
+# Then restart Claude Desktop to pick up new tool definitions
 ```
 
-If the Remote Script was modified, copy to the installed location:
-```bash
-cp AbletonMCP_Remote_Script/__init__.py "/Users/palmer/Library/Preferences/Ableton/Live 12.3.5/User Remote Scripts/AbletonMCP/__init__.py"
-```
-Then restart Ableton.
+### Per-Session Track Configurations
+
+Track maps for specific Live Sets are stored in `sessions/` as separate files.
+Each file documents: track indices, names, sample types (loop vs one-shot), durations, colors, mute states, devices.
+This keeps per-project context separate so different Live Sets don't get mixed up.
+
+To load context for a session, read the matching file from `sessions/`.
+To find which session file to use, call `get_song_name` or `get_session_path` and match it.
+
+### Key Technical Gotchas
+
+- **MIDI note programming**: `add_notes_to_clip` works on SESSION clips only. To build arrangement: create session clips -> program notes -> `duplicate_clip_to_arrangement`
+- **Arrangement clips**: Created via `create_midi_clip_in_arrangement` CANNOT have notes added via `add_notes_to_clip`
+- **Simpler Classic mode**: MIDI note length = sample playback length. Loops need sustained notes to play through fully. One-shots can use short percussive notes.
+- **C3 (pitch 60)** = original pitch in Simpler
+- **browser.user_folders**: Returns a `BrowserItemVector` (list), NOT a `BrowserItem` with `.children` — iterate directly
+- **User samples directory**: `/Users/palmer/Music/Samples/`
 
 ## Environment Variables
 
@@ -71,7 +100,7 @@ Then restart Ableton.
 | `ABLETON_HOST` | localhost | Ableton host |
 | `ABLETON_PORT` | 9877 | Ableton TCP port |
 
-## Complete Tool Inventory (352 tools)
+## Complete Tool Inventory (353 tools)
 
 ### Connection & Status (3)
 - `health_check` — Check if Ableton is connected and responsive
@@ -191,9 +220,10 @@ Then restart Ableton.
 - `get_rack_macros` — Get macro knob values
 - `set_rack_macro` — Set a macro knob value
 
-### Simpler/Sampler (2)
+### Simpler/Sampler (3)
 - `get_simpler_sample_info` — Get sample info from Simpler device
 - `get_simpler_parameters` — Get Simpler device parameters
+- `load_sample_to_simpler` — Load audio sample file into a Simpler device via browser hotswap
 
 ### Send/Return (8)
 - `get_send_level` / `set_send_level` — Track send levels

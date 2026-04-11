@@ -42,3 +42,6 @@ Thumbs.db
 .pytest_cache/
 htmlcov/
 .coverage
+
+# Per-session track configs (local, not shared)
+sessions/

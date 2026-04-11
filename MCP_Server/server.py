@@ -9,6 +9,7 @@ import threading
 from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, List, Union, Optional
+from .tool_search import ToolSearchIndex
 
 # Configure logging
 logging.basicConfig(level=logging.INFO,
@@ -228,6 +229,8 @@ mcp = FastMCP(
     instructions="Ableton Live integration through the Model Context Protocol",
     lifespan=server_lifespan
 )
+
+_tool_search_index = ToolSearchIndex()
 
 # Global connection for resources
 _ableton_connection = None
@@ -4592,15 +4595,29 @@ def load_browser_item_to_return(ctx: Context, return_index: int, item_uri: str) 
         return f"Error loading browser item to return: {str(e)}"
 
 @mcp.tool()
-def set_song_scale(ctx: Context, scale_name: str) -> str:
-    """Set the scale of the song (e.g. 'Major', 'Minor', 'Dorian')."""
+def set_song_scale(ctx: Context, scale_name: str, scale_mode: bool = None) -> str:
+    """Set the scale of the song (e.g. 'Major', 'Minor', 'Dorian'). Optionally enable/disable scale mode."""
     try:
         ableton = get_ableton_connection()
-        result = ableton.send_command("set_song_scale", {"scale_name": scale_name})
-        return f"Song scale set to {scale_name}"
+        params = {"scale_name": scale_name}
+        if scale_mode is not None:
+            params["scale_mode"] = scale_mode
+        result = ableton.send_command("set_song_scale", params)
+        return json.dumps(result)
     except Exception as e:
         logger.error(f"Error setting song scale: {str(e)}")
         return f"Error setting song scale: {str(e)}"
+
+@mcp.tool()
+def set_scale_mode(ctx: Context, enabled: bool) -> str:
+    """Enable or disable scale mode (highlights in-scale notes in MIDI editor)."""
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_scale_mode", {"enabled": enabled})
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f"Error setting scale mode: {str(e)}")
+        return f"Error setting scale mode: {str(e)}"
 
 
 # =============================================================================
@@ -6081,6 +6098,42 @@ def get_note_tunings(ctx: Context) -> str:
     except Exception as e:
         logger.error(f"Error getting note tunings: {str(e)}")
         return f"Error getting note tunings: {str(e)}"
+
+@mcp.tool()
+def search_tools(query: str, max_results: int = 20) -> str:
+    """Search for available Ableton tools by keyword or category.
+
+    Use this to discover tools before calling them. Examples:
+    - search_tools("drum") → drum-related tools
+    - search_tools("volume mix") → mixing tools
+    - search_tools("clip notes") → MIDI note tools
+    - search_tools("transport") → playback/recording tools
+
+    Returns matching tool names. Call the tool directly after finding it.
+    """
+    results = _tool_search_index.search(query, max_results=max_results)
+    if not results:
+        categories = _tool_search_index.list_categories()
+        return json.dumps({
+            "matches": [],
+            "hint": f"No matches for '{query}'. Try one of these categories: {', '.join(categories)}"
+        }, indent=2)
+    return json.dumps({
+        "matches": results,
+        "count": len(results),
+        "query": query,
+    }, indent=2)
+
+
+@mcp.tool()
+def list_tool_categories() -> str:
+    """List all available tool categories for browsing.
+
+    Returns category names and tool counts. Use search_tools() with a category name to see its tools.
+    """
+    stats = _tool_search_index.stats()
+    return json.dumps(stats, indent=2)
+
 
 # Main execution
 def main():

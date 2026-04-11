@@ -718,7 +718,7 @@ class AbletonMCP(ControlSurface):
                                  # --- NEW: Tuning mutating ---
                                  "set_tuning_system_name",
                                  # --- NEW: Missing handlers added ---
-                                 "set_song_scale", "set_record_mode", "set_view_zoom"]:
+                                 "set_song_scale", "set_scale_mode", "set_record_mode", "set_view_zoom"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue(maxsize=1)
                 # Flag to let scheduled task know if caller already timed out
@@ -1652,7 +1652,11 @@ class AbletonMCP(ControlSurface):
                         # --- NEW: Missing handlers ---
                         elif command_type == "set_song_scale":
                             scale_name = params.get("scale_name", "Major")
-                            result = self._set_song_scale(scale_name)
+                            scale_mode = params.get("scale_mode", None)
+                            result = self._set_song_scale(scale_name, scale_mode)
+                        elif command_type == "set_scale_mode":
+                            enabled = params.get("enabled", True)
+                            result = self._set_scale_mode(enabled)
                         elif command_type == "set_record_mode":
                             enabled = params.get("enabled", False)
                             result = self._set_record_mode(enabled)
@@ -5383,6 +5387,9 @@ class AbletonMCP(ControlSurface):
                     browser_or_item.audio_effects,
                     browser_or_item.midi_effects
                 ]
+                # Also check plugins (VST/AU) if available
+                if hasattr(browser_or_item, 'plugins'):
+                    categories.append(browser_or_item.plugins)
                 
                 for category in categories:
                     item = self._find_browser_item_by_uri(category, uri, max_depth, current_depth + 1)
@@ -6255,15 +6262,32 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error getting song scale: " + str(e))
             return {"error": str(e)}
 
-    def _set_song_scale(self, scale_name):
-        """Set the song's scale by name"""
+    def _set_song_scale(self, scale_name, scale_mode=None):
+        """Set the song's scale by name, optionally enable/disable scale mode"""
         try:
             if hasattr(self._song, 'scale_name'):
                 self._song.scale_name = scale_name
-                return {"success": True, "scale_name": self._song.scale_name}
+                if scale_mode is not None and hasattr(self._song, 'scale_mode'):
+                    self._song.scale_mode = bool(scale_mode)
+                return {
+                    "success": True,
+                    "scale_name": self._song.scale_name,
+                    "scale_mode": self._song.scale_mode if hasattr(self._song, 'scale_mode') else None
+                }
             return {"error": "scale_name property not available"}
         except Exception as e:
             self.log_message("Error setting song scale: " + str(e))
+            return {"error": str(e)}
+
+    def _set_scale_mode(self, enabled):
+        """Enable or disable scale mode"""
+        try:
+            if hasattr(self._song, 'scale_mode'):
+                self._song.scale_mode = bool(enabled)
+                return {"success": True, "scale_mode": self._song.scale_mode}
+            return {"error": "scale_mode property not available"}
+        except Exception as e:
+            self.log_message("Error setting scale mode: " + str(e))
             return {"error": str(e)}
 
     def _set_record_mode(self, enabled):
@@ -7027,23 +7051,48 @@ class AbletonMCP(ControlSurface):
     # ========================================================================
 
     def _get_detail_clip(self):
-        """Get currently selected clip in detail view"""
+        """Get currently selected clip in detail view (session or arrangement)"""
         try:
             view = self._song.view
             clip = view.detail_clip
             if clip:
-                # Find track and slot
+                result = {
+                    "name": clip.name,
+                    "is_midi": clip.is_midi_clip,
+                    "is_audio": clip.is_audio_clip,
+                    "length": clip.length,
+                    "looping": clip.looping,
+                    "muted": clip.muted
+                }
+                if clip.is_audio_clip:
+                    try:
+                        result["pitch_coarse"] = clip.pitch_coarse
+                        result["pitch_fine"] = clip.pitch_fine
+                        result["gain"] = clip.gain
+                        result["warping"] = clip.warping
+                        result["warp_mode"] = clip.warp_mode
+                    except Exception:
+                        pass
+                # Try to find in session clip slots
                 for ti, track in enumerate(self._song.tracks):
                     for ci, slot in enumerate(track.clip_slots):
                         if slot.clip == clip:
-                            return {
-                                "track_index": ti,
-                                "clip_index": ci,
-                                "name": clip.name,
-                                "is_midi": clip.is_midi_clip,
-                                "length": clip.length
-                            }
-                return {"clip": "found but location unknown"}
+                            result["track_index"] = ti
+                            result["clip_index"] = ci
+                            result["location"] = "session"
+                            return result
+                # Try to find in arrangement clips
+                for ti, track in enumerate(self._song.tracks):
+                    for ai, arr_clip in enumerate(track.arrangement_clips):
+                        if arr_clip == clip:
+                            result["track_index"] = ti
+                            result["arrangement_clip_index"] = ai
+                            result["start_time"] = arr_clip.start_time
+                            result["end_time"] = arr_clip.end_time
+                            result["location"] = "arrangement"
+                            return result
+                result["location"] = "unknown"
+                return result
             return {"clip": None}
         except Exception as e:
             return {"error": str(e)}
@@ -7930,7 +7979,7 @@ class AbletonMCP(ControlSurface):
     # ========================================================================
 
     def _get_arrangement_clips(self, track_index):
-        """Get all arrangement clips on a track"""
+        """Get all arrangement clips on a track with full properties"""
         track = self._validate_track_index(track_index)
         clips = []
         for clip in track.arrangement_clips:
@@ -7944,6 +7993,15 @@ class AbletonMCP(ControlSurface):
                 "is_midi": clip.is_midi_clip,
                 "muted": clip.muted
             }
+            if clip.is_audio_clip:
+                try:
+                    clip_info["pitch_coarse"] = clip.pitch_coarse
+                    clip_info["pitch_fine"] = clip.pitch_fine
+                    clip_info["gain"] = clip.gain
+                    clip_info["warping"] = clip.warping
+                    clip_info["warp_mode"] = clip.warp_mode
+                except Exception:
+                    pass
             clips.append(clip_info)
         return {"clips": clips, "count": len(clips)}
 
