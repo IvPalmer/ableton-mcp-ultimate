@@ -1,3 +1,5 @@
+@AGENTS.md
+
 # Ableton MCP Ultimate
 
 The most comprehensive Ableton Live MCP server — 353 tools for complete DAW control via Claude.
@@ -15,7 +17,7 @@ Claude/LLM  <-->  MCP Server (FastMCP, Python)  <--TCP:9877-->  Remote Script (C
 ## Project Location
 
 ```
-/Users/palmer/Music/Plugins/ableton-mcp-ultimate/
+/Users/palmer/Dev/music/production/ableton-mcp/
 ```
 
 ### Key Files
@@ -33,8 +35,8 @@ Claude/LLM  <-->  MCP Server (FastMCP, Python)  <--TCP:9877-->  Remote Script (C
 
 | Component | Path |
 |-----------|------|
-| MCP Server binary | `/Users/palmer/Music/Plugins/ableton-mcp-ultimate/.venv/bin/ableton-mcp-ultimate` |
-| Remote Script (source) | `/Users/palmer/Music/Plugins/ableton-mcp-ultimate/AbletonMCP_Remote_Script/__init__.py` |
+| MCP Server binary | `/Users/palmer/Dev/music/production/ableton-mcp/.venv/bin/ableton-mcp-ultimate` |
+| Remote Script (source) | `/Users/palmer/Dev/music/production/ableton-mcp/AbletonMCP_Remote_Script/__init__.py` |
 | Remote Script (User) | `/Users/palmer/Library/Preferences/Ableton/Live 12.3.5/User Remote Scripts/AbletonMCP/__init__.py` |
 | Remote Script (App Bundle - what Ableton reads) | `/Applications/Ableton Live 12 Suite.app/Contents/App-Resources/MIDI Remote Scripts/AbletonMCP/__init__.py` |
 | Claude Desktop config | `/Users/palmer/Library/Application Support/Claude/claude_desktop_config.json` |
@@ -51,10 +53,10 @@ Claude/LLM  <-->  MCP Server (FastMCP, Python)  <--TCP:9877-->  Remote Script (C
 
 ```bash
 # 1. Copy to User Remote Scripts
-cp /Users/palmer/Music/Plugins/ableton-mcp-ultimate/AbletonMCP_Remote_Script/__init__.py "/Users/palmer/Library/Preferences/Ableton/Live 12.3.5/User Remote Scripts/AbletonMCP/__init__.py"
+cp /Users/palmer/Dev/music/production/ableton-mcp/AbletonMCP_Remote_Script/__init__.py "/Users/palmer/Library/Preferences/Ableton/Live 12.3.5/User Remote Scripts/AbletonMCP/__init__.py"
 
 # 2. Copy to App Bundle (requires sudo — user must run this manually)
-sudo cp /Users/palmer/Music/Plugins/ableton-mcp-ultimate/AbletonMCP_Remote_Script/__init__.py "/Applications/Ableton Live 12 Suite.app/Contents/App-Resources/MIDI Remote Scripts/AbletonMCP/__init__.py"
+sudo cp /Users/palmer/Dev/music/production/ableton-mcp/AbletonMCP_Remote_Script/__init__.py "/Applications/Ableton Live 12 Suite.app/Contents/App-Resources/MIDI Remote Scripts/AbletonMCP/__init__.py"
 
 # 3. Restart Ableton Live
 ```
@@ -62,7 +64,7 @@ sudo cp /Users/palmer/Music/Plugins/ableton-mcp-ultimate/AbletonMCP_Remote_Scrip
 ### Rebuilding MCP Server After Changes
 
 ```bash
-cd /Users/palmer/Music/Plugins/ableton-mcp-ultimate
+cd /Users/palmer/Dev/music/production/ableton-mcp
 source .venv/bin/activate
 pip install -e .
 # Then restart Claude Desktop to pick up new tool definitions
