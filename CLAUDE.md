@@ -1,3 +1,5 @@
+@AGENTS.md
+
 # Ableton MCP Ultimate
 
 The most comprehensive Ableton Live MCP server — 353 tools for complete DAW control via Claude.
