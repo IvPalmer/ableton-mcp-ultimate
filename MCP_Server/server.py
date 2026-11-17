@@ -133,6 +133,7 @@ class AbletonConnection:
             "duplicate_clip", "set_clip_color", "set_clip_loop",
             "remove_notes", "remove_all_notes", "transpose_notes",
             "set_tempo", "fire_clip", "stop_clip", "set_device_parameter",
+            "set_arrangement_clips",
             "toggle_device", "delete_device",
             "start_playback", "stop_playback", "load_instrument_or_effect",
             "load_browser_item",
@@ -638,6 +639,11 @@ def get_clip_notes(ctx: Context, track_index: int, clip_index: int) -> str:
     Parameters:
     - track_index: The index of the track containing the clip
     - clip_index: The index of the clip slot containing the clip
+    
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
     """
     try:
         ableton = get_ableton_connection()
@@ -664,6 +670,11 @@ def add_notes_to_clip(
     - track_index: The index of the track containing the clip
     - clip_index: The index of the clip slot containing the clip
     - notes: List of note dictionaries, each with pitch, start_time, duration, velocity, and mute
+    
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
     """
     try:
         ableton = get_ableton_connection()
@@ -686,6 +697,11 @@ def set_clip_name(ctx: Context, track_index: int, clip_index: int, name: str) ->
     - track_index: The index of the track containing the clip
     - clip_index: The index of the clip slot containing the clip
     - name: The new name for the clip
+    
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
     """
     try:
         ableton = get_ableton_connection()
@@ -1516,6 +1532,11 @@ def remove_all_notes(ctx: Context, track_index: int, clip_index: int) -> str:
     Parameters:
     - track_index: The index of the track containing the clip
     - clip_index: The index of the clip slot containing the clip
+    
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
     """
     try:
         ableton = get_ableton_connection()
@@ -1537,6 +1558,11 @@ def transpose_notes(ctx: Context, track_index: int, clip_index: int, semitones: 
     - track_index: The index of the track containing the clip
     - clip_index: The index of the clip slot containing the clip
     - semitones: Number of semitones to transpose (positive = up, negative = down)
+    
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
     """
     try:
         ableton = get_ableton_connection()
@@ -2587,6 +2613,11 @@ def get_clip_pitch(ctx: Context, track_index: int, clip_index: int) -> str:
     Parameters:
     - track_index: The index of the track
     - clip_index: The index of the clip slot
+    
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
     """
     try:
         ableton = get_ableton_connection()
@@ -2608,6 +2639,11 @@ def set_clip_gain(ctx: Context, track_index: int, clip_index: int, gain: float) 
     - track_index: The index of the track
     - clip_index: The index of the clip slot
     - gain: Gain in dB (e.g., -6.0 for -6dB, 3.0 for +3dB)
+    
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
     """
     try:
         ableton = get_ableton_connection()
@@ -2632,6 +2668,11 @@ def set_clip_pitch(ctx: Context, track_index: int, clip_index: int, pitch: int) 
     - track_index: The index of the track
     - clip_index: The index of the clip slot
     - pitch: Pitch shift in semitones (-48 to +48)
+    
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
     """
     try:
         ableton = get_ableton_connection()
@@ -2656,6 +2697,11 @@ def set_clip_warp_mode(ctx: Context, track_index: int, clip_index: int, warp_mod
     - track_index: The index of the track
     - clip_index: The index of the clip slot
     - warp_mode: Warp mode (beats, tones, texture, repitch, complex, complex_pro)
+    
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
     """
     try:
         ableton = get_ableton_connection()
@@ -2679,6 +2725,11 @@ def get_clip_warp_info(ctx: Context, track_index: int, clip_index: int) -> str:
     Parameters:
     - track_index: The index of the track
     - clip_index: The index of the clip slot
+    
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
     """
     try:
         ableton = get_ableton_connection()
@@ -3497,7 +3548,12 @@ def quantize_clip(ctx: Context, track_index: int, clip_index: int, quantization:
 
 @mcp.tool()
 def get_clip_info(ctx: Context, track_index: int, clip_index: int) -> str:
-    """Get detailed information about a specific clip."""
+    """Get detailed information about a specific clip.
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
+    """
     try:
         ableton = get_ableton_connection()
         result = ableton.send_command("get_clip_info", {"track_index": track_index, "clip_index": clip_index})
@@ -5141,6 +5197,50 @@ def get_arrangement_clips(ctx: Context, track_index: int) -> str:
         return f"Error getting arrangement clips: {str(e)}"
 
 @mcp.tool()
+def set_arrangement_clips(
+    ctx: Context,
+    track_index: int,
+    pitch: int = None,
+    pitch_fine: int = None,
+    warp_mode: str = None,
+    warping: bool = None,
+    gain: float = None,
+    start_time: float = None,
+    end_time: float = None,
+) -> str:
+    """Bulk-edit the arrangement clips on a track. Only supplied properties are applied.
+
+    Use this to retune or re-warp a whole part in one call instead of one call per clip.
+
+    Parameters:
+    - track_index: Index of the track
+    - pitch: Transpose in semitones (-48 to 48), audio clips only
+    - pitch_fine: Detune in cents (-50 to 50), audio clips only
+    - warp_mode: beats | tones | texture | repitch | complex | rex | complex_pro
+    - warping: Enable/disable warping
+    - gain: Clip gain (linear)
+    - start_time / end_time: Restrict to clips whose start_time is in [start_time, end_time).
+      Omit both to apply to every clip on the track.
+
+    Returns counts of matched/changed clips plus any per-clip errors.
+    """
+    try:
+        params = {"track_index": track_index}
+        for key, value in (
+            ("pitch", pitch), ("pitch_fine", pitch_fine), ("warp_mode", warp_mode),
+            ("warping", warping), ("gain", gain),
+            ("start_time", start_time), ("end_time", end_time),
+        ):
+            if value is not None:
+                params[key] = value
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_arrangement_clips", params)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error setting arrangement clips: {str(e)}")
+        return f"Error setting arrangement clips: {str(e)}"
+
+@mcp.tool()
 def create_audio_clip_in_arrangement(ctx: Context, track_index: int, file_path: str, position: float) -> str:
     """Load an audio file into the arrangement at a specific position.
 
@@ -5607,6 +5707,11 @@ def set_clip_muted(ctx: Context, track_index: int, clip_index: int, muted: bool)
     - track_index: Index of the track
     - clip_index: Index of the clip slot
     - muted: Whether to mute/deactivate the clip
+    
+
+    Arrangement clips: pass a NEGATIVE clip_index -- -1 is the first arrangement
+    clip on the track, -2 the second, and so on (see get_arrangement_clips for
+    the ordering). Non-negative indices address session clip slots as usual.
     """
     try:
         ableton = get_ableton_connection()

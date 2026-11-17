@@ -81,8 +81,8 @@ To find which session file to use, call `get_song_name` or `get_session_path` an
 
 ### Key Technical Gotchas
 
-- **MIDI note programming**: `add_notes_to_clip` works on SESSION clips only. To build arrangement: create session clips -> program notes -> `duplicate_clip_to_arrangement`
-- **Arrangement clips**: Created via `create_midi_clip_in_arrangement` CANNOT have notes added via `add_notes_to_clip`
+- **Arrangement clips**: reachable via a **negative `clip_index`** (`-1` = first arrangement clip). See "Addressing Arrangement Clips" below. `set_arrangement_clips` bulk-edits pitch/warp/gain in one call.
+- **MIDI note programming**: `add_notes_to_clip` with a non-negative `clip_index` targets SESSION clips. The session -> `duplicate_clip_to_arrangement` route is still the easiest way to *build* arrangement material; negative indices are for *editing* clips already in the arrangement.
 - **Simpler Classic mode**: MIDI note length = sample playback length. Loops need sustained notes to play through fully. One-shots can use short percussive notes.
 - **C3 (pitch 60)** = original pitch in Simpler
 - **browser.user_folders**: Returns a `BrowserItemVector` (list), NOT a `BrowserItem` with `.children` — iterate directly
@@ -447,6 +447,63 @@ To find which session file to use, call `get_song_name` or `get_session_path` an
 5. **Cue point navigation**: `jump_to_next_cue`, `jump_to_prev_cue`, `jump_to_cue_point`.
 6. **85 new Remote Script handlers** across 18 categories: Song-level extended, Scene properties, Clip slot properties, Track properties extended, Arrangement access, Mixer device, Device parameter details, Groove manipulation, Plugin presets, Rack chain extended, Cue points extended, Clip extended, Application/View, Extended MIDI notes (Live 11+), Compressor sidechain routing, Simpler/sample deep control, Looper device, and Tuning system (Live 12).
 
+## Addressing Arrangement Clips
+
+Live has no `ClipSlot` for arrangement clips — session clips live at
+`track.clip_slots[i].clip`, arrangement clips at `track.arrangement_clips[i]`.
+Every clip tool used to index `clip_slots` directly, so arrangement clips were
+unreachable for writes and failed with `"No clip in slot"`.
+
+**Convention: a NEGATIVE `clip_index` addresses arrangement clips.**
+
+```
+clip_index  -1  -> track.arrangement_clips[0]
+clip_index  -2  -> track.arrangement_clips[1]
+clip_index  -N  -> track.arrangement_clips[N-1]
+```
+
+Non-negative indices address session slots exactly as before. Call
+`get_arrangement_clips(track_index)` first — the returned order is the order you index.
+
+This works via `ArrangementClipSlot`, a shim exposing `.clip` / `.has_clip`, returned by
+`_validate_clip_slot` for negative indices. Because every handler now resolves clips
+through that validator, all ~60 clip tools gained arrangement support at once.
+
+Launch members (`fire`, `stop`, `duplicate_clip_to`) are deliberately **not** on the shim —
+they are meaningless for arrangement clips and raise `AttributeError` rather than no-op.
+
+**Anything touching clips must call `self._validate_clip_slot(track_index, clip_index)`.**
+A raw `track.clip_slots[clip_index]` silently indexes from the *end* of the session list
+when handed a negative index — wrong clip, no error. `tests/test_arrangement_clips.py`
+guards against this regression.
+
+### Bulk edits
+
+`set_arrangement_clips` edits many clips in one round trip — retuning 120 clips
+one call at a time is 120 round trips.
+
+```python
+# Transpose an entire part down a tritone and fix its warp mode
+set_arrangement_clips(track_index=19, pitch=-6, warp_mode="complex_pro")
+
+# Restrict to one section (clips whose start_time is in [448, 704))
+set_arrangement_clips(track_index=19, pitch=-6, start_time=448, end_time=704)
+
+# Correct a flat sample without transposing it
+set_arrangement_clips(track_index=3, pitch_fine=29)
+```
+
+Accepts `pitch`, `pitch_fine`, `warp_mode`, `warping`, `gain`, `start_time`, `end_time`.
+Only supplied properties are applied. Warping is force-enabled when a `warp_mode` is set,
+since Live rejects `warp_mode` writes on unwarped clips.
+
+### Warp mode enum (was wrong before)
+
+`0 beats · 1 tones · 2 texture · 3 repitch · 4 complex · 5 rex · 6 complex_pro`
+
+`complex_pro` was previously mapped to **5**, which is REX — asking for Complex Pro
+silently gave you the wrong mode. Fixed.
+
 ## Known Limitations / Future Opportunities
 
 Items that may require further development:
@@ -458,6 +515,7 @@ Items that may require further development:
 - **Audio analysis**: Spectral analysis, beat detection, etc. Not available in the LOM.
 
 Previously listed as limitations, now implemented:
+- ~~Arrangement clips were read-only~~ → see "Addressing Arrangement Clips" below
 - ~~Tuning system~~ → `get_tuning_system`, `set_tuning_system_name`, `get_note_tunings`
 - ~~Looper device control~~ → `looper_action`, `looper_speed`, `looper_get_state`
 - ~~Scene tempo/time signature~~ → `set_scene_tempo`, `set_scene_time_signature`
