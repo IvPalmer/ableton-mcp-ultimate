@@ -19,6 +19,43 @@ def create_instance(c_instance):
     """Create and return the AbletonMCP script instance"""
     return AbletonMCP(c_instance)
 
+
+class ArrangementClipSlot(object):
+    """Adapter that makes an arrangement Clip usable by clip_slot-based handlers.
+
+    Live exposes session clips via track.clip_slots[i].clip and arrangement clips
+    via track.arrangement_clips[i] -- there is no ClipSlot for the latter. Handlers
+    in this file uniformly do `clip_slot.has_clip` then `clip_slot.clip`, so wrapping
+    an arrangement clip in this shim lets every one of them address arrangement
+    clips without a per-handler rewrite.
+
+    Launch-oriented members (fire/stop/duplicate_clip_to) are deliberately absent:
+    they are meaningless for arrangement clips. __getattr__ turns those into an
+    explicit message rather than a bare AttributeError from deep inside a handler.
+    """
+
+    SLOT_ONLY_HINT = (
+        "'{}' is a Session clip-slot operation and does not apply to arrangement "
+        "clips. You passed a negative clip_index ({}), which addresses "
+        "track.arrangement_clips. Use a non-negative clip_index for slot operations "
+        "such as fire/stop/create/delete/duplicate."
+    )
+
+    def __init__(self, clip, clip_index=None):
+        self.clip = clip
+        self._clip_index = clip_index
+
+    @property
+    def has_clip(self):
+        return self.clip is not None
+
+    def __getattr__(self, name):
+        # Only reached for attributes that do not exist -- i.e. slot-only API.
+        raise AttributeError(
+            ArrangementClipSlot.SLOT_ONLY_HINT.format(name, self.__dict__.get("_clip_index"))
+        )
+
+
 class AbletonMCP(ControlSurface):
     """AbletonMCP Remote Script for Ableton Live"""
 
@@ -688,6 +725,7 @@ class AbletonMCP(ControlSurface):
                                  # --- NEW: Arrangement mutating ---
                                  "create_audio_clip_in_arrangement", "create_midi_clip_in_arrangement",
                                  "duplicate_clip_to_arrangement", "jump_in_running_session_clip",
+                                 "set_arrangement_clips",
                                  # --- NEW: Mixer mutating ---
                                  "set_track_panning_mode", "set_track_split_stereo",
                                  # --- NEW: Device mutating ---
@@ -1461,6 +1499,17 @@ class AbletonMCP(ControlSurface):
                             clip_index = params.get("clip_index", 0)
                             time = params.get("time", 0)
                             result = self._duplicate_clip_to_arrangement(track_index, clip_index, time)
+                        elif command_type == "set_arrangement_clips":
+                            result = self._set_arrangement_clips(
+                                params.get("track_index", 0),
+                                pitch=params.get("pitch"),
+                                pitch_fine=params.get("pitch_fine"),
+                                warp_mode=params.get("warp_mode"),
+                                warping=params.get("warping"),
+                                gain=params.get("gain"),
+                                start_time=params.get("start_time"),
+                                end_time=params.get("end_time"),
+                            )
                         elif command_type == "jump_in_running_session_clip":
                             track_index = params.get("track_index", 0)
                             beats = params.get("beats", 0)
@@ -1943,9 +1992,27 @@ class AbletonMCP(ControlSurface):
         return self._song.tracks[track_index]
 
     def _validate_clip_slot(self, track_index, clip_index):
-        """Validate track and clip indices, return clip slot"""
+        """Validate track and clip indices, return a clip slot (or arrangement shim).
+
+        A NEGATIVE clip_index addresses the track's arrangement clips:
+            -1 -> arrangement_clips[0], -2 -> arrangement_clips[1], ...
+        i.e. arrangement_index = -clip_index - 1.
+
+        This keeps every existing clip tool working unchanged while making
+        arrangement clips reachable; session indices (>= 0) behave exactly as before.
+        """
         track = self._validate_track_index(track_index)
-        if clip_index < 0 or clip_index >= len(track.clip_slots):
+        if clip_index < 0:
+            arrangement_clips = list(track.arrangement_clips)
+            arrangement_index = -clip_index - 1
+            if arrangement_index >= len(arrangement_clips):
+                raise IndexError(
+                    f"Arrangement clip index {arrangement_index} out of range "
+                    f"(0-{len(arrangement_clips)-1}) on track {track_index}; "
+                    f"use clip_index -1..-{len(arrangement_clips)} to address them"
+                )
+            return ArrangementClipSlot(arrangement_clips[arrangement_index], clip_index)
+        if clip_index >= len(track.clip_slots):
             raise IndexError(f"Clip index {clip_index} out of range (0-{len(track.clip_slots)-1})")
         return track.clip_slots[clip_index]
 
@@ -2540,10 +2607,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -2633,10 +2700,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -2783,10 +2850,10 @@ class AbletonMCP(ControlSurface):
             
             track = self._song.tracks[track_index]
             
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
             
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             
             # Check if the clip slot already has a clip
             if clip_slot.has_clip:
@@ -2812,10 +2879,10 @@ class AbletonMCP(ControlSurface):
             
             track = self._song.tracks[track_index]
             
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
             
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -2852,10 +2919,10 @@ class AbletonMCP(ControlSurface):
             
             track = self._song.tracks[track_index]
             
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
             
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -2892,10 +2959,10 @@ class AbletonMCP(ControlSurface):
             
             track = self._song.tracks[track_index]
             
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
             
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -2918,10 +2985,10 @@ class AbletonMCP(ControlSurface):
             
             track = self._song.tracks[track_index]
             
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
             
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             
             clip_slot.stop()
             
@@ -3252,10 +3319,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -3291,10 +3358,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -3321,10 +3388,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -3356,10 +3423,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -3393,10 +3460,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -3426,10 +3493,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -3707,7 +3774,15 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            # Session-view selection is scene-indexed; a negative clip_index would
+            # index self._song.scenes from the end and silently select the wrong scene.
+            if clip_index < 0:
+                raise ValueError(
+                    "select_clip addresses the Session grid and requires a non-negative "
+                    "clip_index; arrangement clips have no clip slot to highlight"
+                )
+
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
             # Select the track and scene
@@ -3716,7 +3791,7 @@ class AbletonMCP(ControlSurface):
                 self._song.view.selected_scene = self._song.scenes[clip_index]
 
             # Try to highlight the clip slot
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if hasattr(self._song.view, 'highlighted_clip_slot'):
                 self._song.view.highlighted_clip_slot = clip_slot
 
@@ -4188,10 +4263,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -4237,10 +4312,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -4288,10 +4363,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             if not clip_slot.has_clip:
                 raise Exception("No clip in slot")
@@ -4339,10 +4414,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             # Create clip if it doesn't exist
             if not clip_slot.has_clip:
@@ -4450,10 +4525,10 @@ class AbletonMCP(ControlSurface):
 
             track = self._song.tracks[track_index]
 
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
+            if clip_index >= len(track.clip_slots):
                 raise IndexError("Clip index out of range")
 
-            clip_slot = track.clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
 
             # Create clip if it doesn't exist
             if not clip_slot.has_clip:
@@ -4592,7 +4667,8 @@ class AbletonMCP(ControlSurface):
                 "texture": 2,
                 "repitch": 3,
                 "complex": 4,
-                "complex_pro": 5
+                "rex": 5,
+                "complex_pro": 6
             }
 
             mode_value = warp_modes.get(warp_mode.lower(), 0)
@@ -4620,7 +4696,8 @@ class AbletonMCP(ControlSurface):
             if not clip.is_audio_clip:
                 raise ValueError("Clip is not an audio clip")
 
-            warp_mode_names = ["beats", "tones", "texture", "repitch", "complex", "complex_pro"]
+            # Live enum: 0 beats, 1 tones, 2 texture, 3 repitch, 4 complex, 5 rex, 6 complex_pro
+            warp_mode_names = ["beats", "tones", "texture", "repitch", "complex", "rex", "complex_pro"]
 
             return {
                 "track_index": track_index,
@@ -5699,7 +5776,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -5730,7 +5807,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -5755,7 +5832,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -5782,7 +5859,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -5827,7 +5904,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -5866,7 +5943,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -5900,7 +5977,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -5939,7 +6016,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -5965,7 +6042,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -5991,7 +6068,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -6012,7 +6089,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -6033,7 +6110,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -6068,7 +6145,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -6322,7 +6399,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -6345,7 +6422,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -6368,7 +6445,7 @@ class AbletonMCP(ControlSurface):
             clip_slots = list(track.clip_slots)
             if clip_index >= len(clip_slots):
                 return {"error": "Clip index out of range"}
-            clip_slot = clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip in slot"}
             clip = clip_slot.clip
@@ -6694,7 +6771,7 @@ class AbletonMCP(ControlSurface):
             tracks = list(self._song.tracks)
             if track_index >= len(tracks):
                 return {"error": "Track index out of range"}
-            clip_slot = tracks[track_index].clip_slots[clip_index]
+            clip_slot = self._validate_clip_slot(track_index, clip_index)
             if not clip_slot.has_clip:
                 return {"error": "No clip"}
             clip = clip_slot.clip
@@ -6706,7 +6783,7 @@ class AbletonMCP(ControlSurface):
         """Set clip start marker"""
         try:
             tracks = list(self._song.tracks)
-            clip = tracks[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             clip.start_marker = position
             return {"success": True}
         except Exception as e:
@@ -6716,7 +6793,7 @@ class AbletonMCP(ControlSurface):
         """Set clip end marker"""
         try:
             tracks = list(self._song.tracks)
-            clip = tracks[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             clip.end_marker = position
             return {"success": True}
         except Exception as e:
@@ -6874,7 +6951,7 @@ class AbletonMCP(ControlSurface):
     def _get_clip_is_playing(self, track_index, clip_index):
         """Check if clip is playing"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             return {
                 "is_playing": clip.is_playing,
                 "is_triggered": clip.is_triggered,
@@ -7022,7 +7099,7 @@ class AbletonMCP(ControlSurface):
     def _get_clip_velocity_amount(self, track_index, clip_index):
         """Get MIDI clip velocity amount"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if not clip.is_midi_clip:
                 return {"error": "Not MIDI clip"}
             return {"velocity_amount": clip.velocity_amount if hasattr(clip, 'velocity_amount') else 1.0}
@@ -7032,7 +7109,7 @@ class AbletonMCP(ControlSurface):
     def _set_clip_velocity_amount(self, track_index, clip_index, amount):
         """Set MIDI clip velocity amount"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             clip.velocity_amount = amount
             return {"success": True}
         except Exception as e:
@@ -7100,7 +7177,7 @@ class AbletonMCP(ControlSurface):
     def _set_detail_clip(self, track_index, clip_index):
         """Set clip to show in detail view"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if clip:
                 self._song.view.detail_clip = clip
                 return {"success": True}
@@ -7191,7 +7268,7 @@ class AbletonMCP(ControlSurface):
     def _get_clip_fades(self, track_index, clip_index):
         """Get audio clip fade settings"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if clip.is_midi_clip:
                 return {"error": "MIDI clips don't have fades"}
             return {
@@ -7206,7 +7283,7 @@ class AbletonMCP(ControlSurface):
     def _set_clip_fade_in(self, track_index, clip_index, start, end):
         """Set audio clip fade in"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if clip.is_midi_clip:
                 return {"error": "MIDI clips don't have fades"}
             if hasattr(clip, 'fade_in_start'):
@@ -7220,7 +7297,7 @@ class AbletonMCP(ControlSurface):
     def _set_clip_fade_out(self, track_index, clip_index, start, end):
         """Set audio clip fade out"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if clip.is_midi_clip:
                 return {"error": "MIDI clips don't have fades"}
             if hasattr(clip, 'fade_out_start'):
@@ -7238,7 +7315,7 @@ class AbletonMCP(ControlSurface):
     def _get_clip_start_time(self, track_index, clip_index):
         """Get clip start time"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             return {"start_time": clip.start_time if hasattr(clip, 'start_time') else clip.loop_start}
         except Exception as e:
             return {"error": str(e)}
@@ -7246,7 +7323,7 @@ class AbletonMCP(ControlSurface):
     def _set_clip_start_time(self, track_index, clip_index, time):
         """Set clip start time"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if hasattr(clip, 'start_time'):
                 clip.start_time = time
             return {"success": True}
@@ -7256,7 +7333,7 @@ class AbletonMCP(ControlSurface):
     def _get_clip_end_time(self, track_index, clip_index):
         """Get clip end time"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             return {"end_time": clip.end_time if hasattr(clip, 'end_time') else clip.loop_end}
         except Exception as e:
             return {"error": str(e)}
@@ -7264,7 +7341,7 @@ class AbletonMCP(ControlSurface):
     def _set_clip_end_time(self, track_index, clip_index, time):
         """Set clip end time"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if hasattr(clip, 'end_time'):
                 clip.end_time = time
             return {"success": True}
@@ -7396,7 +7473,7 @@ class AbletonMCP(ControlSurface):
     def _get_notes_in_range(self, track_index, clip_index, start_time, end_time, pitch_start=0, pitch_end=127):
         """Get MIDI notes within time and pitch range"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if not clip.is_midi_clip:
                 return {"error": "Not a MIDI clip"}
             notes = clip.get_notes(start_time, pitch_start, end_time - start_time, pitch_end - pitch_start + 1)
@@ -7479,7 +7556,7 @@ class AbletonMCP(ControlSurface):
     def _get_clip_playing_position(self, track_index, clip_index):
         """Get clip's current playing position"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             return {
                 "playing_position": clip.playing_position if hasattr(clip, 'playing_position') else None,
                 "is_playing": clip.is_playing,
@@ -7564,7 +7641,7 @@ class AbletonMCP(ControlSurface):
     def _quantize_clip(self, track_index, clip_index, quantize_to, amount=1.0):
         """Quantize clip to grid"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if not clip.is_midi_clip:
                 return {"error": "Not a MIDI clip"}
             # quantize_to: 0.25 = 1/16, 0.5 = 1/8, 1.0 = 1/4, etc.
@@ -7580,7 +7657,7 @@ class AbletonMCP(ControlSurface):
     def _deselect_all_notes(self, track_index, clip_index):
         """Deselect all notes in clip"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if not clip.is_midi_clip:
                 return {"error": "Not a MIDI clip"}
             clip.deselect_all_notes()
@@ -7595,7 +7672,7 @@ class AbletonMCP(ControlSurface):
     def _duplicate_clip_loop(self, track_index, clip_index):
         """Duplicate clip loop (double length)"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             clip.duplicate_loop()
             return {"success": True, "new_length": clip.length}
         except Exception as e:
@@ -7608,7 +7685,7 @@ class AbletonMCP(ControlSurface):
     def _set_clip_notes(self, track_index, clip_index, notes):
         """Replace all notes in clip"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if not clip.is_midi_clip:
                 return {"error": "Not a MIDI clip"}
             # Remove existing
@@ -7645,7 +7722,7 @@ class AbletonMCP(ControlSurface):
     def _get_clip_has_envelopes(self, track_index, clip_index):
         """Check if clip has automation envelopes"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             return {"has_envelopes": clip.has_envelopes if hasattr(clip, 'has_envelopes') else None}
         except Exception as e:
             return {"error": str(e)}
@@ -7657,7 +7734,7 @@ class AbletonMCP(ControlSurface):
     def _move_clip_notes(self, track_index, clip_index, time_delta, pitch_delta, start_time=0, end_time=None, pitch_start=0, pitch_end=127):
         """Move notes in clip by time and/or pitch delta"""
         try:
-            clip = list(self._song.tracks)[track_index].clip_slots[clip_index].clip
+            clip = self._validate_clip_slot(track_index, clip_index).clip
             if not clip.is_midi_clip:
                 return {"error": "Not a MIDI clip"}
             if end_time is None:
@@ -8004,6 +8081,91 @@ class AbletonMCP(ControlSurface):
                     pass
             clips.append(clip_info)
         return {"clips": clips, "count": len(clips)}
+
+    WARP_MODES = {
+        "beats": 0, "tones": 1, "texture": 2,
+        "repitch": 3, "complex": 4, "rex": 5, "complex_pro": 6,
+    }
+
+    def _set_arrangement_clips(self, track_index, pitch=None, pitch_fine=None,
+                               warp_mode=None, warping=None, gain=None,
+                               start_time=None, end_time=None):
+        """Bulk-edit arrangement clips on a track.
+
+        Applies only the properties that were supplied. Optionally restricted to
+        clips whose start_time falls in [start_time, end_time) -- this is how you
+        retune one section without touching the rest of the arrangement.
+
+        Editing 120 clips one call at a time is 120 round trips; this is one.
+        """
+        track = self._validate_track_index(track_index)
+
+        # Live rejects warp_mode writes on unwarped clips, so a warp_mode request has
+        # to enable warping. Silently overriding an explicit warping=False would change
+        # how Live times the audio, so refuse the contradiction instead.
+        if warp_mode is not None and warping is False:
+            raise ValueError(
+                "warping=False conflicts with warp_mode='{}': setting a warp mode "
+                "requires warping to be enabled. Pass one or the other.".format(warp_mode)
+            )
+
+        if warp_mode is not None:
+            key = str(warp_mode).lower()
+            if key not in self.WARP_MODES:
+                raise ValueError(
+                    "Unknown warp_mode '{}'; expected one of: {}".format(
+                        warp_mode, ", ".join(sorted(self.WARP_MODES))
+                    )
+                )
+            warp_mode_value = self.WARP_MODES[key]
+        else:
+            warp_mode_value = None
+
+        matched = 0
+        changed = 0
+        skipped_non_audio = 0
+        errors = []
+
+        for index, clip in enumerate(track.arrangement_clips):
+            if start_time is not None and clip.start_time < start_time:
+                continue
+            if end_time is not None and clip.start_time >= end_time:
+                continue
+            matched += 1
+
+            audio_only = (pitch is not None or pitch_fine is not None
+                          or warp_mode_value is not None or warping is not None
+                          or gain is not None)
+            if audio_only and not clip.is_audio_clip:
+                skipped_non_audio += 1
+                continue
+
+            try:
+                # Warping must be enabled before warp_mode is writable.
+                if warping is not None:
+                    clip.warping = bool(warping)
+                if warp_mode_value is not None:
+                    if not clip.warping:
+                        clip.warping = True
+                    clip.warp_mode = warp_mode_value
+                if pitch is not None:
+                    clip.pitch_coarse = max(-48, min(48, int(pitch)))
+                if pitch_fine is not None:
+                    clip.pitch_fine = max(-50, min(50, int(pitch_fine)))
+                if gain is not None:
+                    clip.gain = float(gain)
+                changed += 1
+            except Exception as e:
+                errors.append({"arrangement_index": index, "error": str(e)})
+
+        return {
+            "track_index": track_index,
+            "total_clips": len(track.arrangement_clips),
+            "matched": matched,
+            "changed": changed,
+            "skipped_non_audio": skipped_non_audio,
+            "errors": errors,
+        }
 
     def _create_audio_clip_in_arrangement(self, track_index, file_path, position):
         """Load an audio file into the arrangement at a position"""
