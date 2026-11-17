@@ -8168,13 +8168,21 @@ class AbletonMCP(ControlSurface):
                 if gain_v is not None:
                     clip.gain = gain_v
         except Exception as e:
+            rollback_failures = []
             for clip, saved in reversed(undo):
-                for f in ("warping", "warp_mode", "pitch_coarse", "pitch_fine", "gain"):
+                # warp_mode is only writable while warping is on, so restore warping last.
+                for f in ("warp_mode", "pitch_coarse", "pitch_fine", "gain", "warping"):
                     if f in saved:
                         try:
+                            if f == "warp_mode" and not clip.warping:
+                                clip.warping = True
                             setattr(clip, f, saved[f])
-                        except Exception:
-                            pass
+                        except Exception as re:
+                            rollback_failures.append("{}: {}".format(f, re))
+            if rollback_failures:
+                raise RuntimeError(
+                    "set_arrangement_clips failed on arrangement clip {}: {}; rollback incomplete: {}".format(
+                        index, e, "; ".join(rollback_failures)))
             raise RuntimeError(
                 "set_arrangement_clips failed on arrangement clip {}: {}; all changes were rolled back".format(
                     index, e))
