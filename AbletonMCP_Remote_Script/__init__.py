@@ -1729,9 +1729,10 @@ class AbletonMCP(ControlSurface):
                 # Schedule the task to run on the main thread
                 try:
                     self.schedule_message(0, main_thread_task)
-                except Exception:
-                    # If we're already on the main thread or schedule fails, execute directly
-                    main_thread_task()
+                except Exception as e:
+                    # Never mutate Live off its main thread: fail closed.
+                    self.log_message("schedule_message failed: " + str(e))
+                    response_queue.put_nowait({"status": "error", "message": "could not schedule on Live's main thread: " + str(e)})
                 
                 # Wait for the response with a timeout
                 try:
@@ -8121,26 +8122,38 @@ class AbletonMCP(ControlSurface):
         else:
             warp_mode_value = None
 
-        matched = 0
-        changed = 0
-        skipped_non_audio = 0
-        errors = []
+        # Convert every value before touching Live, so a bad input changes nothing.
+        pitch_v = max(-48, min(48, int(pitch))) if pitch is not None else None
+        pitch_fine_v = max(-50, min(50, int(pitch_fine))) if pitch_fine is not None else None
+        gain_v = float(gain) if gain is not None else None
+        audio_only = (pitch is not None or pitch_fine is not None
+                      or warp_mode_value is not None or warping is not None
+                      or gain is not None)
 
+        matched = 0
+        skipped_non_audio = 0
+        targets = []
         for index, clip in enumerate(track.arrangement_clips):
             if start_time is not None and clip.start_time < start_time:
                 continue
             if end_time is not None and clip.start_time >= end_time:
                 continue
             matched += 1
-
-            audio_only = (pitch is not None or pitch_fine is not None
-                          or warp_mode_value is not None or warping is not None
-                          or gain is not None)
             if audio_only and not clip.is_audio_clip:
                 skipped_non_audio += 1
                 continue
+            targets.append((index, clip))
 
-            try:
+        # All-or-nothing: snapshot what we touch, and restore it if any write fails.
+        fields = [f for f, v in (("warping", warping is not None or warp_mode_value is not None),
+                                 ("warp_mode", warp_mode_value is not None),
+                                 ("pitch_coarse", pitch_v is not None),
+                                 ("pitch_fine", pitch_fine_v is not None),
+                                 ("gain", gain_v is not None)) if v]
+        undo = []
+        try:
+            for index, clip in targets:
+                undo.append((clip, {f: getattr(clip, f) for f in fields}))
                 # Warping must be enabled before warp_mode is writable.
                 if warping is not None:
                     clip.warping = bool(warping)
@@ -8148,15 +8161,25 @@ class AbletonMCP(ControlSurface):
                     if not clip.warping:
                         clip.warping = True
                     clip.warp_mode = warp_mode_value
-                if pitch is not None:
-                    clip.pitch_coarse = max(-48, min(48, int(pitch)))
-                if pitch_fine is not None:
-                    clip.pitch_fine = max(-50, min(50, int(pitch_fine)))
-                if gain is not None:
-                    clip.gain = float(gain)
-                changed += 1
-            except Exception as e:
-                errors.append({"arrangement_index": index, "error": str(e)})
+                if pitch_v is not None:
+                    clip.pitch_coarse = pitch_v
+                if pitch_fine_v is not None:
+                    clip.pitch_fine = pitch_fine_v
+                if gain_v is not None:
+                    clip.gain = gain_v
+        except Exception as e:
+            for clip, saved in reversed(undo):
+                for f in ("warping", "warp_mode", "pitch_coarse", "pitch_fine", "gain"):
+                    if f in saved:
+                        try:
+                            setattr(clip, f, saved[f])
+                        except Exception:
+                            pass
+            raise RuntimeError(
+                "set_arrangement_clips failed on arrangement clip {}: {}; all changes were rolled back".format(
+                    index, e))
+        changed = len(targets)
+        errors = []
 
         return {
             "track_index": track_index,

@@ -133,6 +133,7 @@ class AbletonConnection:
             "duplicate_clip", "set_clip_color", "set_clip_loop",
             "remove_notes", "remove_all_notes", "transpose_notes",
             "set_tempo", "fire_clip", "stop_clip", "set_device_parameter",
+            "set_arrangement_clips",
             "toggle_device", "delete_device",
             "start_playback", "stop_playback", "load_instrument_or_effect",
             "load_browser_item",
